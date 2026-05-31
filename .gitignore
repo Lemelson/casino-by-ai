@@ -1,0 +1,11 @@
+# macOS
+.DS_Store
+
+# редакторы
+.vscode/
+.idea/
+*.swp
+
+# превью/сборка (если появятся)
+node_modules/
+dist/
