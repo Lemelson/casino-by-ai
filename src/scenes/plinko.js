@@ -10,7 +10,7 @@ const SLOT_Y = TOP + ROWS * RGAP;            // верх корзин
 const BIN_W = PGAP, BIN_X0 = CX - 4 * PGAP - PGAP / 2;
 const MULT = [10, 3, 1.5, 0.6, 0.4, 0.6, 1.5, 3, 10];
 const BET_LEVELS = [5, 10, 25, 50, 100];
-const FALL_DUR = 1.3;
+const GRAV = 620, REST = 0.5;   // гравитация и упругость отскока шарика
 
 const BACK = { x: 2, y: 3, w: 54, h: 14 };
 const MUTE = { x: 300, y: 4, w: 16, h: 12 };
@@ -18,7 +18,8 @@ const B_MINUS = { x: 10, y: 152, w: 16, h: 16 };
 const B_PLUS = { x: 66, y: 152, w: 16, h: 16 };
 const B_DROP = { x: 232, y: 150, w: 82, h: 26 };
 
-const binColor = (m) => (m >= 10 ? C.gold : m >= 3 ? C.orange : m >= 1 ? C.green : m >= 0.6 ? C.cyan : C.grayDk);
+// градиент «опасность -> награда»: центр красный (проигрыш), края золотые (джекпот)
+const binColor = (m) => (m >= 10 ? C.gold : m >= 3 ? C.orange : m >= 1.5 ? C.green : m >= 0.6 ? C.red : C.redDk);
 
 export function createPlinko(game) {
   const { input, audio, economy } = game;
@@ -40,7 +41,7 @@ export function createPlinko(game) {
     const prefix = [0];
     for (let r = 0; r < ROWS; r++) prefix.push(prefix[r] + dirs[r]);
     const bin = 4 + sum / 2;
-    balls.push({ dirs, prefix, bin, bet, t: 0, trail: [] });
+    balls.push({ x: CX + (Math.random() * 2 - 1), y: 18, vx: 0, vy: 0, seg: 0, prefix, bin, bet, trail: [], landed: false, landT: 0 });
     audio.spin();
   }
 
@@ -51,23 +52,6 @@ export function createPlinko(game) {
     binFlash[b.bin] = 0.6;
     lastWin = win - b.bet; winTimer = 0; // показываем чистый результат
     if (m >= 3) audio.win(m >= 10); else if (win >= b.bet) audio.coin(); else audio.reelStop();
-  }
-
-  function ballPos(b) {
-    const p = clamp(b.t / FALL_DUR, 0, 1);
-    const rf = p * ROWS;
-    const r = Math.min(ROWS - 1, Math.floor(rf));
-    const frac = rf - Math.floor(rf);
-    const offBefore = prefixOffset(b, Math.floor(rf));
-    const offAfter = prefixOffset(b, Math.floor(rf) + 1);
-    const off = lerp(offBefore, offAfter, frac);
-    const x = CX + off * PGAP;
-    const y = lerp(TOP - 8, SLOT_Y - 4, p) - Math.abs(Math.sin(p * ROWS * Math.PI)) * 2;
-    return { x, y, p };
-  }
-  function prefixOffset(b, rowsDone) {
-    const r = clamp(rowsDone, 0, ROWS);
-    return 0.5 * b.prefix[r];
   }
 
   return {
@@ -85,14 +69,34 @@ export function createPlinko(game) {
       if (input.clicked(B_PLUS.x, B_PLUS.y, B_PLUS.w, B_PLUS.h)) { if (betIndex < BET_LEVELS.length - 1) { betIndex++; audio.bet(); } }
       if (input.clicked(B_DROP.x, B_DROP.y, B_DROP.w, B_DROP.h) || input.wasPressed('Space')) drop();
 
+      const binFloorY = SLOT_Y + 11;
       for (const b of balls) {
-        b.t += dt;
-        const pos = ballPos(b);
-        b.trail.push({ x: pos.x, y: pos.y });
-        if (b.trail.length > 6) b.trail.shift();
-        if (b.t >= FALL_DUR && !b.done) { b.done = true; land(b); }
+        b.vy += GRAV * dt;
+        b.x += b.vx * dt;
+        b.y += b.vy * dt;
+        if (b.seg < ROWS) {
+          const ry = TOP + b.seg * RGAP;
+          if (b.y >= ry) {                                  // удар о пег в ряду seg
+            b.y = ry;
+            b.vy = -Math.abs(b.vy) * REST;                  // подскок вверх
+            const tx = CX + 0.5 * b.prefix[b.seg + 1] * PGAP;
+            const nextY = (b.seg + 1 < ROWS) ? TOP + (b.seg + 1) * RGAP : binFloorY;
+            const h = Math.max(2, nextY - b.y);
+            const tt = (-b.vy + Math.sqrt(b.vy * b.vy + 2 * GRAV * h)) / GRAV; // время до след. ряда
+            b.vx = (tx - b.x) / tt;                         // курс к честно выбранному столбцу
+            b.seg++;
+          }
+        } else if (b.y >= binFloorY) {                      // приземление в корзину
+          b.y = binFloorY;
+          b.vy = -Math.abs(b.vy) * 0.32;
+          b.vx *= 0.5;
+          if (!b.landed) { b.landed = true; land(b); }
+        }
+        if (b.landed) b.landT += dt;
+        b.trail.push({ x: b.x, y: b.y });
+        if (b.trail.length > 7) b.trail.shift();
       }
-      balls = balls.filter((b) => b.t < FALL_DUR + 0.3);
+      balls = balls.filter((b) => !b.landed || b.landT < 0.5);
     },
 
     render(g) {
@@ -126,8 +130,8 @@ export function createPlinko(game) {
         const flash = binFlash[b] > 0;
         g.rect(x + 1, SLOT_Y, BIN_W - 2, 22, flash ? C.yellow : col);
         g.rectLine(x + 1, SLOT_Y, BIN_W - 2, 22, C.bg0, 1);
-        const label = (MULT[b] % 1 === 0 ? '' + MULT[b] : '' + MULT[b]);
-        const tc = (MULT[b] >= 0.6 && MULT[b] < 1) || MULT[b] >= 10 ? C.bg0 : C.white;
+        const label = '' + MULT[b];
+        const tc = MULT[b] >= 1.5 ? C.bg0 : C.white;   // тёмный на светлых, белый на красных
         drawTextCentered(g, label, x + BIN_W / 2, SLOT_Y + 3, flash ? C.bg0 : tc);
         drawTextCentered(g, 'x', x + BIN_W / 2, SLOT_Y + 12, flash ? C.bg0 : tc);
       }
@@ -139,9 +143,8 @@ export function createPlinko(game) {
           g.circle(b.trail[i].x, b.trail[i].y, 1, C.magenta);
         }
         g.resetAlpha();
-        const pos = ballPos(b);
-        g.circle(pos.x, pos.y, 2, C.magenta);
-        g.px(pos.x - 1, pos.y - 1, C.white);
+        g.circle(b.x, b.y, 2, C.magenta);
+        g.px(b.x - 1, b.y - 1, C.white);
       }
 
       // результат последнего шарика

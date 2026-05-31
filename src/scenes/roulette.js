@@ -15,7 +15,9 @@ const CW = 17, CH = 12, Z0W = 16, COLW = 18;
 const GX = Math.round((320 - (Z0W + 12 * CW + COLW)) / 2) + Z0W; // левый край сетки чисел
 const Z0X = GX - Z0W;
 const GY = 70;
-const WHEEL = { x: 40, y: 42, r: 22 };
+const WHEEL = { x: 42, y: 46, r: 24 };       // колесо в покое (слева сверху)
+const BIG = { x: 160, y: 80, r: 56 };        // колесо во время спина (по центру, крупно)
+const WHEEL_SPINS = 5, BALL_SPINS = 8;
 
 const BACK = { x: 2, y: 3, w: 54, h: 14 };
 const MUTE = { x: 300, y: 4, w: 16, h: 12 };
@@ -72,8 +74,10 @@ export function createRoulette(game) {
   let sel = 1;                 // выбранная фишка (25)
   let winNum = -1;
   let spinT = 0;
-  const SPIN_DUR = 3.2;
-  let ballFinal = 0;
+  const SPIN_DUR = 4.0;
+  let grow = 0;                       // 0 — покой, 1 — большое колесо по центру
+  let wheelRotFinal = 0;
+  let ballAngleFinal = -Math.PI / 2;
   let history = [];
   let lastWin = 0;
   let roundOver = false;
@@ -94,7 +98,8 @@ export function createRoulette(game) {
     economy.bet(tb);
     winNum = (Math.random() * 37) | 0;
     const idx = EURO.indexOf(winNum);
-    ballFinal = (idx + 0.5) / 37 * Math.PI * 2 - Math.PI / 2; // карман у верхнего маркера
+    ballAngleFinal = -Math.PI / 2;                            // шарик садится у верхнего маркера
+    wheelRotFinal = -Math.PI / 2 - (idx / 37) * Math.PI * 2;  // колесо доворачивает выигрышный карман наверх
     state = 'spinning'; spinT = 0; roundOver = false; lastWin = 0; audio.spin();
   }
 
@@ -112,6 +117,8 @@ export function createRoulette(game) {
     update(dt) {
       time += dt; bannerTimer += dt;
       if (denyFlash > 0) denyFlash -= dt;
+      const growTarget = (state === 'spinning' || (roundOver && bannerTimer < 1.4)) ? 1 : 0;
+      grow += (growTarget - grow) * Math.min(1, dt * 9);
 
       if (input.clicked(BACK.x, BACK.y, BACK.w, BACK.h) || input.wasPressed('Escape')) { audio.nav(); game.scenes.go('lobby'); return; }
       if (input.clicked(MUTE.x, MUTE.y, MUTE.w, MUTE.h) || input.wasPressed('KeyM')) audio.toggleMute();
@@ -148,9 +155,9 @@ export function createRoulette(game) {
       drawText(g, cr, 296 - textWidth(cr), 5, denyFlash > 0 ? C.red : C.gold);
       drawMute(g, audio.muted);
 
-      drawWheel(g);
-      drawHistory(g);
       drawTable(g);
+      drawHistory(g);
+      drawWheel(g);
       drawBanner(g);
       drawControls(g);
     },
@@ -158,44 +165,56 @@ export function createRoulette(game) {
 
   // ---------- отрисовка ----------
   function drawWheel(g) {
-    const { x: cx, y: cy, r } = WHEEL;
-    const inner = 9;
-    // кольцо карманов
+    const cx = Math.round(lerp(WHEEL.x, BIG.x, grow));
+    const cy = Math.round(lerp(WHEEL.y, BIG.y, grow));
+    const r = Math.round(lerp(WHEEL.r, BIG.r, grow));
+    const inner = Math.max(5, Math.round(r * 0.42));
+
+    // затемняем стол, когда колесо разрослось
+    if (grow > 0.02) { g.alpha(0.82 * grow); g.rect(0, 17, 320, 126, C.void); g.resetAlpha(); }
+
+    let wheelRot = wheelRotFinal, ballA = ballAngleFinal;
+    if (state === 'spinning') {
+      const e = easeOutCubic(clamp(spinT / SPIN_DUR, 0, 1));
+      wheelRot = wheelRotFinal + (1 - e) * WHEEL_SPINS * Math.PI * 2;   // колесо тормозит
+      ballA = ballAngleFinal - (1 - e) * BALL_SPINS * Math.PI * 2;      // шарик крутится встречно
+    }
+
+    // карманы (цвет пикселя выбираем с учётом поворота колеса)
+    const r2 = r * r, i2 = inner * inner;
     for (let dy = -r; dy <= r; dy++) {
       for (let dx = -r; dx <= r; dx++) {
-        const d = Math.sqrt(dx * dx + dy * dy);
-        if (d > r || d < inner) continue;
-        let a = Math.atan2(dy, dx) + Math.PI / 2;
-        a = a / (Math.PI * 2); a -= Math.floor(a);
+        const d2 = dx * dx + dy * dy;
+        if (d2 > r2 || d2 < i2) continue;
+        let a = (Math.atan2(dy, dx) - wheelRot) / (Math.PI * 2);
+        a -= Math.floor(a);
         const n = EURO[Math.floor(a * 37) % 37];
         g.px(cx + dx, cy + dy, n === 0 ? C.green : RED.has(n) ? C.red : C.bg0);
       }
     }
-    g.ring(cx, cy, r, C.gold, 1);
+    g.ring(cx, cy, r, C.gold, grow > 0.5 ? 2 : 1);
     g.circle(cx, cy, inner, C.goldDk);
-    // маркер сверху
-    g.rect(cx, cy - r - 3, 1, 3, C.white);
+    g.ring(cx, cy, inner, C.gold, 1);
+
+    // указатель сверху (треугольник вниз)
+    triDown(g, cx, cy - r - 4, 3, C.white);
 
     // шарик
-    let ballA;
-    const spinning = state === 'spinning';
-    if (spinning) {
-      const e = easeOutCubic(clamp(spinT / SPIN_DUR, 0, 1));
-      ballA = ballFinal + (1 - e) * 7 * Math.PI * 2;
-    } else if (winNum >= 0) {
-      ballA = ballFinal;
-    }
-    if (ballA != null) {
-      const bx = cx + Math.cos(ballA) * (r - 3), by = cy + Math.sin(ballA) * (r - 3);
-      g.circle(bx, by, 2, C.white);
+    if (winNum >= 0 || state === 'spinning') {
+      const br = Math.max(1, Math.round(r * 0.09));
+      const rad = r - br - 2;
+      g.circle(cx + Math.cos(ballA) * rad, cy + Math.sin(ballA) * rad, br, C.white);
     }
 
-    // результат в центре
-    if (!spinning && winNum >= 0) {
+    // число-результат в центре
+    if (winNum >= 0 && (state !== 'spinning' || spinT > SPIN_DUR * 0.82)) {
       const col = winNum === 0 ? C.green : RED.has(winNum) ? C.redLt : C.silver;
-      drawTextCentered(g, '' + winNum, cx, cy - 3, col);
+      const sc = grow > 0.5 ? 2 : 1;
+      drawTextCentered(g, '' + winNum, cx, cy - 3 * sc, col, { scale: sc });
     }
   }
+
+  function triDown(g, x, topY, sz, col) { for (let i = 0; i <= sz; i++) { const w = sz - i; g.rect(x - w, topY + i, 2 * w + 1, 1, col); } }
 
   function drawHistory(g) {
     drawText(g, 'LAST', 72, 22, C.silver);
