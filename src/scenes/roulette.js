@@ -196,6 +196,19 @@ export function createRoulette(game) {
     g.circle(cx, cy, inner, C.goldDk);
     g.ring(cx, cy, inner, C.gold, 1);
 
+    // подсветка «теоретически выигрышных» карманов по текущим ставкам
+    if (Object.keys(bets).length) {
+      const winSet = new Set();
+      for (let nn = 0; nn <= 36; nn++) for (const key in bets) if (betWins(key, nn)) { winSet.add(nn); break; }
+      const mk = Math.sin(time * 8) > 0 ? C.white : C.yellow;
+      const dot = grow > 0.5 ? 2 : 1;
+      for (let i = 0; i < 37; i++) {
+        if (!winSet.has(EURO[i])) continue;
+        const ang = (i / 37) * Math.PI * 2 + wheelRot;
+        g.circle(cx + Math.cos(ang) * (r - 1), cy + Math.sin(ang) * (r - 1), dot, mk);
+      }
+    }
+
     // указатель сверху (треугольник вниз)
     triDown(g, cx, cy - r - 4, 3, C.white);
 
@@ -206,8 +219,8 @@ export function createRoulette(game) {
       g.circle(cx + Math.cos(ballA) * rad, cy + Math.sin(ballA) * rad, br, C.white);
     }
 
-    // число-результат в центре
-    if (winNum >= 0 && (state !== 'spinning' || spinT > SPIN_DUR * 0.82)) {
+    // число-результат в центре — ТОЛЬКО после полной остановки, с короткой паузой
+    if (winNum >= 0 && state !== 'spinning' && bannerTimer > 0.55) {
       const col = winNum === 0 ? C.green : RED.has(winNum) ? C.redLt : C.silver;
       const sc = grow > 0.5 ? 2 : 1;
       drawTextCentered(g, '' + winNum, cx, cy - 3 * sc, col, { scale: sc });
