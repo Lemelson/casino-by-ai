@@ -6,6 +6,9 @@ code, with **zero external assets**. It renders at a tiny internal resolution
 synthesizes its own 8-bit sound. Pure **JavaScript + Canvas**, no build step, no
 dependencies.
 
+This open-source HTML5 browser game includes playable slots, blackjack, European
+roulette, and Plinko in one neon arcade, with transparent game logic and RTP values.
+
 **▶️ Play it live:** https://lemelson.github.io/casino-by-ai/
 
 ![Made with vanilla JS](https://img.shields.io/badge/vanilla-JS-f7df1e?logo=javascript&logoColor=black)
